@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>スクロールテスト</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #87CEEB; touch-action: none; font-family: sans-serif; }
+  #game-container { display: flex; flex-direction: column; height: 100vh; }
+  canvas { flex: 1; width: 100%; display: block; }
+  
+  /* スマホ用操作ボタン */
+  #controls { height: 100px; display: flex; justify-content: space-between; background: #222; padding: 10px; gap: 10px; }
+  .btn { flex: 1; background: #444; color: white; font-size: 24px; font-weight: bold; border: none; border-radius: 10px; user-select: none; }
+  .btn:active { background: #666; }
+  .btn-group { display: flex; flex: 2; gap: 10px; }
+  .btn-jump { flex: 1; }
+
+  /* 紙芝居パート */
+  #slideshow-container { display: none; width: 100vw; height: 100vh; background: #111; flex-direction: column; justify-content: center; align-items: center; color: white; cursor: pointer; }
+  #slideshow-img { max-width: 90%; max-height: 70vh; object-fit: contain; margin-bottom: 20px; }
+  #slideshow-text { font-size: 20px; text-align: center; padding: 0 20px; line-height: 1.5; }
+
+  /* スタート画面 */
+  #start-screen {
+    position: absolute;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    cursor: pointer;
+  }
+  #start-screen h1 {
+    font-size: 32px;
+    margin: 0;
+    animation: blink 1.5s infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+</style>
+</head>
+<body>
+
+<!-- スタート画面 -->
+<div id="start-screen">
+  <h1>TAP TO START</h1>
+</div>
+
+<!-- ゲーム画面 -->
+<div id="game-container">
+  <canvas id="gameCanvas"></canvas>
+  <div id="controls">
+    <div class="btn-group">
+      <button class="btn" id="leftBtn">◀</button>
+      <button class="btn" id="rightBtn">▶</button>
+    </div>
+    <button class="btn btn-jump" id="jumpBtn">JUMP</button>
+  </div>
+</div>
+
+<!-- 紙芝居（サプライズ）画面 -->
+<div id="slideshow-container">
+  <img id="slideshow-img" src="" alt="サプライズ画像">
+  <div id="slideshow-text">宝箱を開けた！<br>（タップして次へ）</div>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  
+  // 画面サイズ調整
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight - 120;
+  }
+  resize();
+
+  // ★ カメラのY座標（スクロール用オフセット）
+  let cameraY = 0;
+
+  // プレイヤー設定（ジャンプ力は-10のまま）
+  const player = {
+    x: canvas.width / 2 - 15, y: canvas.height - 50, width: 30, height: 30,
+    dx: 0, dy: 0, speed: 4, jumpPower: -10,
+    grounded: false
+  };
+
+  const playerImg = new Image();
+  playerImg.src = 'moko.png';
+
+  const chestImg = new Image();
+  chestImg.src = 'chest.png';
+
+  // ★ 足場の自動生成（同じX座標で、上に等間隔で20個配置）
+  const platforms = [];
+  const platformWidth = 90;
+  const platformX = canvas.width / 2 - (platformWidth / 2); // 画面の中央に配置
+  const startY = canvas.height - 120; // 最初の足場の高さ
+  const spacing = 70; // 確実にとどく間隔
+
+  for (let i = 0; i < 20; i++) {
+    platforms.push({
+      x: platformX,
+      y: startY - (i * spacing),
+      width: platformWidth,
+      height: 15
+    });
+  }
+
+  // ★ 宝箱を一番上の足場に乗せる
+  const topPlatform = platforms[platforms.length - 1];
+  const chest = {
+    x: topPlatform.x + 30, 
+    y: topPlatform.y - 30, 
+    width: 30, height: 30
+  };
+
+  const gravity = 0.6;
+  let isGameOver = false;
+  let gameStarted = false;
+
+  // ボタン操作のフラグ
+  let leftPressed = false;
+  let rightPressed = false;
+
+  // ボタンイベント（スマホのタッチ対応）
+  const addTouch = (id, downStr, upStr, actionDown, actionUp) => {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); actionDown(); }, {passive: false});
+    el.addEventListener('touchend', (e) => { e.preventDefault(); actionUp(); }, {passive: false});
+    el.addEventListener('mousedown', actionDown);
+    el.addEventListener('mouseup', actionUp);
+    el.addEventListener('mouseleave', actionUp);
+  };
+
+  addTouch('leftBtn', 'touchstart', 'touchend', () => leftPressed = true, () => leftPressed = false);
+  addTouch('rightBtn', 'touchstart', 'touchend', () => rightPressed = true, () => rightPressed = false);
+  addTouch('jumpBtn', 'touchstart', 'touchend', () => {
+    if (player.grounded) { player.dy = player.jumpPower; player.grounded = false; }
+  }, () => {});
+
+  const startScreen = document.getElementById('start-screen');
+  const startGame = (e) => {
+    if (gameStarted) return;
+    if (e) e.preventDefault();
+    gameStarted = true;
+    startScreen.style.display = 'none';
+    update();
+  };
+  startScreen.addEventListener('mousedown', startGame);
+  startScreen.addEventListener('touchstart', startGame, {passive: false});
+
+  // ゲームループ
+  function update() {
+    if (isGameOver || !gameStarted) return;
+
+    // 左右移動
+    if (leftPressed) player.dx = -player.speed;
+    else if (rightPressed) player.dx = player.speed;
+    else player.dx = 0;
+
+    // 重力と位置更新
+    player.dy += gravity;
+    player.x += player.dx;
+    player.y += player.dy;
+
+    // 床の当たり判定
+    if (player.y + player.height >= canvas.height - 10) {
+      player.y = canvas.height - 10 - player.height;
+      player.dy = 0;
+      player.grounded = true;
+    }
+
+    // 画面端の壁
+    if (player.x < 0) player.x = 0;
+    if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+    // 宝箱との当たり判定
+    if (player.x < chest.x + chest.width &&
+        player.x + player.width > chest.x &&
+        player.y < chest.y + chest.height &&
+        player.y + player.height > chest.y) {
+      triggerSurprise();
+    }
+
+    // 足場の当たり判定
+    platforms.forEach(p => {
+        if (player.dy > 0 && 
+            player.x + 30 < p.x + p.width && 
+            player.x + player.width > p.x && 
+            player.y + player.height > p.y && 
+            player.y + player.height < p.y + player.dy + 10) {
+        player.y = p.y - player.height;
+        player.dy = 0;
+        player.grounded = true;
+        }
+    });
+
+    // ★ カメラの追従処理（プレイヤーが画面半分より上にいったらカメラも上へ）
+    let targetCameraY = player.y - (canvas.height / 2);
+    if (targetCameraY > 0) targetCameraY = 0; // 床より下にはスクロールさせない
+    cameraY = targetCameraY;
+
+    draw();
+    requestAnimationFrame(update);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // ★ 全ての描画処理のY座標から「cameraY」を引き算してズラす
+    
+    // 足場の描画
+    ctx.fillStyle = '#8B4513';
+    platforms.forEach(p => ctx.fillRect(p.x, p.y - cameraY, p.width, p.height));
+    
+    // 床の描画
+    ctx.fillStyle = '#2E8B57';
+    ctx.fillRect(0, canvas.height - 10 - cameraY, canvas.width, 10);
+
+    // 宝箱の描画
+    if (chestImg.complete && chestImg.naturalWidth > 0) {
+      ctx.drawImage(chestImg, chest.x, chest.y - cameraY, chest.width, chest.height);
+    } else {
+      ctx.fillStyle = '#FFD700'; 
+      ctx.fillRect(chest.x, chest.y - cameraY, chest.width, chest.height);
+    }
+    
+    // プレイヤーの描画
+    if (playerImg.complete && playerImg.naturalWidth > 0) {
+      ctx.drawImage(playerImg, player.x, (player.y - 25) - cameraY, player.width + 30, player.height + 30);  
+    } else {
+      ctx.fillStyle = '#FF4500'; 
+      ctx.fillRect(player.x, player.y - cameraY, player.width, player.height);
+    }
+  }
+
+  // ★ 宝箱を開けた時だけのスライドに短縮
+  const slides = [
+    { img: 'chest_open.png', text: '宝箱を開けた' }
+  ];
+  let currentSlide = 0;
+
+  function triggerSurprise() {
+    isGameOver = true;
+    document.getElementById('game-container').style.display = 'none';
+    const slideContainer = document.getElementById('slideshow-container');
+    slideContainer.style.display = 'flex';
+    
+    showSlide();
+
+    slideContainer.addEventListener('click', () => {
+      currentSlide++;
+      if (currentSlide < slides.length) {
+        showSlide();
+      } else {
+        document.getElementById('slideshow-text').innerHTML = "おしまい！";
+      }
+    });
+  }
+
+  function showSlide() {
+    const imgEl = document.getElementById('slideshow-img');
+    imgEl.src = slides[currentSlide].img;
+    imgEl.alt = "画像準備中: " + slides[currentSlide].img;
+    document.getElementById('slideshow-text').innerHTML = slides[currentSlide].text;
+  }
+</script>
+</body>
+</html>
