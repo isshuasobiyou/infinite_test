@@ -96,27 +96,34 @@
   const chestImg = new Image();
   chestImg.src = 'chest.png';
 
-  // ★ 足場の自動生成（同じX座標で、上に等間隔で20個配置）
+// ★ 足場の自動生成
   const platforms = [];
   const platformWidth = 90;
-  const platformX = canvas.width / 2 - (platformWidth / 2); // 画面の中央に配置
-  const startY = canvas.height - 120; // 最初の足場の高さ
-  const spacing = 70; // 確実にとどく間隔
+  const startY = canvas.height - 120;
+  const spacing = 70;
 
-  for (let i = 0; i < 20; i++) {
+  // 最初の1個だけは確実に乗れるように画面の中央に配置
+  platforms.push({
+    x: canvas.width / 2 - (platformWidth / 2),
+    y: startY,
+    width: platformWidth,
+    height: 15
+  });
+
+  // 2個目以降（19個）は、X座標をランダムにする
+  for (let i = 1; i < 20; i++) {
     platforms.push({
-      x: platformX,
+      x: Math.random() * (canvas.width - platformWidth), // ★ここでX座標をランダム化！
       y: startY - (i * spacing),
       width: platformWidth,
       height: 15
     });
   }
 
-  // ★ 宝箱を一番上の足場に乗せる
-  const topPlatform = platforms[platforms.length - 1];
+  // ★ 宝箱は足場に乗せず、「高さ -2000」の空中にゴールとして浮かせておく
   const chest = {
-    x: topPlatform.x + 30, 
-    y: topPlatform.y - 30, 
+    x: canvas.width / 2 - 15, 
+    y: -2000, 
     width: 30, height: 30
   };
 
@@ -188,16 +195,24 @@
       triggerSurprise();
     }
 
-    // 足場の当たり判定
+   // 足場の処理
     platforms.forEach(p => {
+        // 当たり判定
         if (player.dy > 0 && 
             player.x + 30 < p.x + p.width && 
             player.x + player.width > p.x && 
             player.y + player.height > p.y && 
             player.y + player.height < p.y + player.dy + 10) {
-        player.y = p.y - player.height;
-        player.dy = 0;
-        player.grounded = true;
+          player.y = p.y - player.height;
+          player.dy = 0;
+          player.grounded = true;
+        }
+
+        // ★ 無限スクロールのタネ明かし
+        // スクロールして画面の下（枠外）に消えた足場を、20個分上の高さにワープさせる
+        if (p.y - cameraY > canvas.height) {
+          p.y -= platforms.length * spacing; 
+          p.x = Math.random() * (canvas.width - p.width); // ワープのついでにX座標も新しくランダムにする
         }
     });
 
